@@ -7,6 +7,7 @@ use beats::Beat;
 use futures::Stream;
 use futures::future::Future;
 use hyper::{Method, StatusCode};
+use hyper::header::ContentType;
 use hyper::server::{Http, Request, Response, Service};
 use std::collections::HashMap;
 use std::env;
@@ -46,7 +47,7 @@ impl Service for Beatbot {
                     if token == my_token {
                         // Handwritten JSON 'cause fuck it
                         let resp = format!("{{ \"response_type\": \"in_channel\",\"text\": \"{}\" }}", Beat::now());
-                        Response::new().with_body(resp)
+                        Response::new().with_header(ContentType::json()).with_body(resp)
                     } else {
                         Response::new().with_status(StatusCode::Unauthorized)
                     }
@@ -63,7 +64,7 @@ impl Service for Beatbot {
 }
 
 fn main() {
-    let addr = "127.0.0.1:3000".parse().unwrap();
+    let addr = "127.0.0.1:3005".parse().unwrap();
     let server = Http::new().bind(&addr, || Ok(Beatbot)).unwrap();
     server.run().unwrap();
 }
