@@ -1,79 +1,44 @@
-#![cfg_attr(feature = "alloc_system", feature(alloc_system, global_allocator, allocator_api))]
-#[cfg(feature = "alloc_system")]
-extern crate alloc_system;
-#[cfg(feature = "alloc_system")]
-use alloc_system::System;
-#[cfg(feature = "alloc_system")]
-#[global_allocator]
-static A: System = System;
-
-extern crate hyper;
-extern crate futures;
 extern crate beats;
-extern crate url;
+extern crate actix_web;
+extern crate env_logger;
+#[macro_use]
+extern crate serde_derive;
 
 use beats::Beat;
-use futures::Stream;
-use futures::future::Future;
-use hyper::{Method, StatusCode};
-use hyper::header::ContentType;
-use hyper::server::{Http, Request, Response, Service};
-use std::collections::HashMap;
 use std::env;
-use url::form_urlencoded;
+use actix_web::{middleware, server, App, Result, HttpResponse, http, http::Method, State, Form};
 
-struct Beatbot;
+struct BeatbotState {
+    token: String
+}
 
-impl Service for Beatbot {
-    type Request = Request;
-    type Response = Response;
-    type Error = hyper::Error;
+#[derive(Deserialize)]
+struct BeatbotParams {
+    token: String,
+}
 
-    type Future = Box<Future<Item=Self::Response, Error=Self::Error>>;
 
-    fn call(&self, req: Request) -> Self::Future {
-
-        match (req.method(), req.path()) {
-            (&Method::Get, "/") => {
-                Box::new(futures::future::ok(
-                        Response::new().with_body("hello")
-                ))
-            },
-            (&Method::Post, "/") => {
-                Box::new(req.body().concat2().map(|b| {
-                    let params = form_urlencoded::parse(b.as_ref())
-                                                    .into_owned()
-                                                    .collect::<HashMap<String, String>>();
-
-                    let token = if let Some(t) = params.get("token") {
-                        t.to_owned()
-                    } else {
-                        return Response::new().with_status(StatusCode::Unauthorized);
-                    };
-
-                    let my_token = env::var("BEATBOT_RS_TOKEN").unwrap();
-
-                    if token == my_token {
-                        // Handwritten JSON 'cause fuck it
-                        let resp = format!("{{ \"response_type\": \"in_channel\",\"text\": \"{}\" }}", Beat::now());
-                        Response::new().with_header(ContentType::json()).with_body(resp)
-                    } else {
-                        Response::new().with_status(StatusCode::Unauthorized)
-                    }
-                }))
-            },
-            _ => {
-                Box::new(futures::future::ok(
-                        Response::new().with_status(StatusCode::NotFound)
-
-                ))
-            },
-        }
+fn beats((state, params): (State<BeatbotState>, Form<BeatbotParams>)) -> Result<HttpResponse> {
+    println!("{:?}, {:?}, {:?}", state.token, params.token, state.token == params.token);
+    if state.token == params.token {
+        Ok(HttpResponse::build(http::StatusCode::OK)
+            .content_type("application/json")
+            .body(format!("{{ \"response_type\": \"in_channel\",\"text\": \"{}\" }}", Beat::now())))
+    } else {
+        Ok(HttpResponse::build(http::StatusCode::UNAUTHORIZED)
+           .body("Wrong token"))
     }
 }
 
+
 fn main() {
-    let addr = "127.0.0.1:3005".parse().unwrap();
-    let server = Http::new().bind(&addr, || Ok(Beatbot)).unwrap();
-    server.run().unwrap();
+    env::set_var("RUST_LOG", "actix_web=info");
+    env_logger::init();
+    server::new(|| {
+        App::with_state(BeatbotState { token: env::var("BEATBOT_RS_TOKEN").unwrap() })
+            .middleware(middleware::Logger::default())
+            .resource("/", |r| r.method(Method::POST).with(beats))
+    }).bind("127.0.0.1:3005")
+        .unwrap()
+        .run()
 }
